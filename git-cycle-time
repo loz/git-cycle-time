@@ -1,0 +1,97 @@
+#!/usr/bin/env ruby
+require 'time'
+# Lists last 20 merges (releases?)
+
+# Lists changes between commits (includes head)
+#git log --format=format:"%h %ci" 665fc11..8a84a23
+
+#MERGES="git log --merges --first-parent -n 20 --reverse --format=format:\"%h %ci %s\""
+
+def get_merge_commits
+  output = `git log --merges --first-parent -n 20 --format=format:%h`
+  output.split("\n").reverse
+end
+
+def get_commits(tail, head)
+  cmd = "git log --format=format:\"%h %ci\" #{tail}..#{head}"
+  output = `#{cmd}`
+  commits = output.split("\n")
+  commits.shift #skip merge commit
+  commits
+end
+
+def commit_time(sha)
+  output = `git log -n 1 --format=format:%ci #{sha}`
+  Time.parse output
+end
+
+def map_times(commits)
+  commits.map do |c|
+    parts = c.split(' ')
+    parts.shift
+    Time.parse(parts.join(' '))
+  end
+end
+
+def analyse_commits(commits, release_time)
+  stats = {}
+  stats[:commits] = commits.length
+  times = map_times(commits)
+  ages = times.map do |t|
+    age = (release_time.to_i - t.to_i).to_f / (60 * 60 * 24)
+    age = age.round
+    age
+  end
+  stats[:mean] = mean(ages)
+  stats[:mode] = mode(ages)
+  stats[:median] = median(ages)
+  stats[:oldest] = ages.max
+  stats
+end
+
+def mean(a)
+  tot = a.inject(0) { |sum, x| sum + x }
+  tot / a.size
+end
+
+def mode(a)
+  hist= a.inject(Hash.new(0)) { |h, n| h[n] += 1; h }
+  mode = hist.keys[0]
+  hist.each_pair do |i, count|
+    mode = i if count > hist[mode]
+  end
+  mode
+end
+
+def median(a)
+  as = a.sort
+  mid = a.size/2
+  if (a.size % 2) == 1
+    return a[mid]
+  else
+    return mean(a[mid-1..mid])
+  end
+end
+
+def get_stats
+  merges = get_merge_commits
+  upper = merges.dup
+  upper.shift
+  merges = upper.zip merges
+  merges.reverse!
+  puts "+---------+------------+---------+--------+--------+--------+--------+"
+  puts "| sha     | date       | changes | oldest | mean   | mode   | median | (days)"
+  puts "+---------+------------+---------+--------+--------+--------+--------+"
+  merges.each do |sha|
+    head, tail = sha
+    commits = get_commits(tail, head)
+    release_time = commit_time(head)
+    release_date = release_time.strftime("%F")
+    stats = analyse_commits(commits, release_time)
+    puts "| %s | %s |%8d |%7.2f |%7.2f |%7.2f |%7.2f |" %  [head, release_date, stats[:commits], stats[:oldest], 
+                stats[:mean], stats[:mode], stats[:median] ]
+  end
+  puts "+---------+------------+---------+--------+--------+--------+--------+"
+end
+
+get_stats
